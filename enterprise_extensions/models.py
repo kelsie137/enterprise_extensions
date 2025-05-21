@@ -3701,7 +3701,7 @@ def stochastic_uldm_fm(
         psd="powerlaw", prior=amp_prior, Tspan=Tspan, components=n_rnfreqs
     )
 
-    # common red noise block
+    # TO IMPLEMENT: common red noise block
     s += common_red_noise_block(
         psd=psd,
         prior=amp_prior,
