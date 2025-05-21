@@ -3563,3 +3563,195 @@ def model_cw(
             pta.set_default_params(noisedict)
 
     return pta
+
+### to be implemented
+def stochastic_uldm_fm(
+    psrs,
+    psd="powerlaw",
+    noisedict=None,
+    white_vary=False,
+    components=30,
+    n_rnfreqs=None,
+    n_uldmfreqs=None,
+    gamma_common=None,
+    delta_common=None,
+    upper_limit=False,
+    bayesephem=False,
+    be_type="setIII",
+    is_wideband=False,
+    use_dmdata=False,
+    Tspan=None,
+    select="backend",
+    tnequad=False,
+    pshift=False,
+    pseed=None,
+    psr_models=False,
+    tm_marg=False,
+    dense_like=False,
+    tm_svd=False,
+):
+    """
+    Reads in list of enterprise Pulsar instance and returns a PTA
+    instantiated with fast mode ULDM model:
+
+    per pulsar:
+        1. fixed EFAC per backend/receiver system
+        2. fixed EQUAD per backend/receiver system
+        3. fixed ECORR per backend/receiver system
+        4. Red noise modeled as a power-law with 30 sampling frequencies
+        5. Pulsar distances, modeled either using DMDist or PXDist objects.
+        6. Linear timing model.
+
+    global:
+        1. ULDM background with the fast-mode ULDM correlation functions.
+        2. Optional physical ephemeris modeling.
+
+    :param psd:
+        PSD to use for common red noise signal. Available options
+        are ['powerlaw', 'turnover' 'spectrum'] 'powerlaw' is default
+        value.
+    :param noisedict:
+        Dictionary of pulsar noise properties. Can provide manually,
+        or the code will attempt to find it.
+    :param white_vary:
+        boolean for varying white noise or keeping fixed.
+    :param components:
+        number of modes in Fourier domain process
+    :param n_rnfreqs:
+        Number of frequencies to use in achromatic rednoise model.
+    :param n_uldmfreqs:
+        Number of frequencies to use in the ULDM model.
+        
+    (main changes here, the common red noise process)
+    :param gamma_common:
+        Fixed common red process spectral index value. By default we
+        vary the spectral index over the range [0, 7].
+    :param delta_common:
+        Fixed common red process spectral index value for higher frequencies in
+        broken power law model.
+        By default we vary the spectral index over the range [0, 7].
+    :param upper_limit:
+        Perform upper limit on common red noise amplitude. By default
+        this is set to False. Note that when perfoming upper limits it
+        is recommended that the spectral index also be fixed to a specific
+        value.
+
+    :param bayesephem:
+        Include BayesEphem model. Set to False by default
+    :param be_type:
+        orbel, orbel-v2, setIII
+    :param is_wideband:
+        Whether input TOAs are wideband TOAs; will exclude ecorr from the white
+        noise model.
+    :param use_dmdata: whether to use DM data (WidebandTimingModel) if
+        is_wideband.
+    :param Tspan: time baseline used to determine Fourier GP frequencies;
+        derived from data if not specified
+    :param pshift:
+        Option to use a random phase shift in design matrix. For testing the
+        null hypothesis.
+    :param pseed:
+        Option to provide a seed for the random phase shift.
+    :param psr_models:
+        Return list of psr models rather than signal_base.PTA object.
+    :param tm_marg: Use marginalized timing model. In many cases this will speed
+        up the likelihood calculation significantly.
+    :param dense_like: Use dense or sparse functions to evalute lnlikelihood
+    :param tm_svd: boolean for svd-stabilised timing model design matrix
+    """
+
+    amp_prior = "uniform" if upper_limit else "log-uniform"
+
+    # find the maximum time span to set GW frequency sampling
+    if Tspan is None:
+        Tspan = model_utils.get_tspan(psrs)
+
+    if n_uldmfreqs is None:
+        n_uldmfreqs = components
+
+    if n_rnfreqs is None:
+        n_rnfreqs = components
+
+    # timing model
+    if is_wideband and use_dmdata:
+        dmjump = parameter.Constant()
+        if white_vary:
+            dmefac = parameter.Uniform(pmin=0.1, pmax=10.0)
+            log10_dmequad = parameter.Uniform(pmin=-7.0, pmax=0.0)
+            # dmjump = parameter.Uniform(pmin=-0.005, pmax=0.005)
+        else:
+            dmefac = parameter.Constant()
+            log10_dmequad = parameter.Constant()
+            # dmjump = parameter.Constant()
+        s = gp_signals.WidebandTimingModel(
+            dmefac=dmefac,
+            log10_dmequad=log10_dmequad,
+            dmjump=dmjump,
+            selection=selections.Selection(selections.by_backend),
+            dmjump_selection=selections.Selection(selections.by_frontend),
+        )
+    else:
+        if tm_marg:
+            s = gp_signals.MarginalizingTimingModel(use_svd=tm_svd)
+        else:
+            s = gp_signals.TimingModel(use_svd=tm_svd)
+
+    # red noise
+    s += red_noise_block(
+        psd="powerlaw", prior=amp_prior, Tspan=Tspan, components=n_rnfreqs
+    )
+
+    # common red noise block
+    s += common_red_noise_block(
+        psd=psd,
+        prior=amp_prior,
+        Tspan=Tspan,
+        components=n_uldmfreqs,
+        gamma_val=gamma_common,
+        delta_val=delta_common,
+        orf="hd",
+        name="gw",
+        pshift=pshift,
+        pseed=pseed,
+    )
+
+    # ephemeris model
+    if bayesephem:
+        s += deterministic_signals.PhysicalEphemerisSignal(
+            use_epoch_toas=True, model=be_type
+        )
+
+    # adding white-noise, and acting on psr objects
+    models = []
+    for p in psrs:
+        if "NANOGrav" in p.flags["pta"] and not is_wideband:
+            s2 = s + white_noise_block(
+                vary=white_vary, inc_ecorr=True, tnequad=tnequad, select=select
+            )
+            models.append(s2(p))
+        else:
+            s3 = s + white_noise_block(
+                vary=white_vary, inc_ecorr=False, tnequad=tnequad, select=select
+            )
+            models.append(s3(p))
+
+    if psr_models:
+        return models
+    else:
+        # set up PTA
+        if dense_like:
+            pta = signal_base.PTA(
+                models, lnlikelihood=signal_base.LogLikelihoodDenseCholesky
+            )
+        else:
+            pta = signal_base.PTA(models)
+
+        # set white noise parameters
+        if not white_vary or (is_wideband and use_dmdata):
+            if noisedict is None:
+                print("No noise dictionary provided!...")
+            else:
+                noisedict = noisedict
+                pta.set_default_params(noisedict)
+
+        return pta
