@@ -3564,18 +3564,22 @@ def model_cw(
 
     return pta
 
-### to be implemented
+##############################################
+###  new function for distances  ###
+##############################################
+
+# adjusted from model 3a
 def stochastic_uldm_fm(
     psrs,
-    psd="powerlaw",
+    dists=None,
     noisedict=None,
     white_vary=False,
     components=30,
     n_rnfreqs=None,
     n_uldmfreqs=None,
-    gamma_common=None,
-    delta_common=None,
     upper_limit=False,
+    logmin=None, #unsure what default should be
+    logmax=None, #unsure what default should be
     bayesephem=False,
     be_type="setIII",
     is_wideband=False,
@@ -3591,25 +3595,23 @@ def stochastic_uldm_fm(
     tm_svd=False,
 ):
     """
-    Reads in list of enterprise Pulsar instance and returns a PTA
-    instantiated with fast mode ULDM model:
+    Reads in list of enterprise Pulsar instances and
+    a distance dictionary, 
+    and returns a PTA instantiated with fast mode ULDM model:
 
     per pulsar:
         1. fixed EFAC per backend/receiver system
         2. fixed EQUAD per backend/receiver system
         3. fixed ECORR per backend/receiver system
-        4. Red noise modeled as a power-law with 30 sampling frequencies
-        5. Pulsar distances, modeled either using DMDist or PXDist objects.
+        4. Red noise modeled as a power-law with 30 sampling frequencies.
+        5. *new* Distances and errors from either direct or parallax measurements.
+           (None if information in Pulsar object, dictionary if in a dictionary.)
         6. Linear timing model.
 
     global:
-        1. ULDM background with the fast-mode ULDM correlation functions.
+        1. *new* ULDM background with the fast-mode ULDM correlation functions.
         2. Optional physical ephemeris modeling.
 
-    :param psd:
-        PSD to use for common red noise signal. Available options
-        are ['powerlaw', 'turnover' 'spectrum'] 'powerlaw' is default
-        value.
     :param noisedict:
         Dictionary of pulsar noise properties. Can provide manually,
         or the code will attempt to find it.
@@ -3622,20 +3624,17 @@ def stochastic_uldm_fm(
     :param n_uldmfreqs:
         Number of frequencies to use in the ULDM model.
         
-    (main changes here, the common red noise process)
-    :param gamma_common:
-        Fixed common red process spectral index value. By default we
-        vary the spectral index over the range [0, 7].
-    :param delta_common:
-        Fixed common red process spectral index value for higher frequencies in
-        broken power law model.
-        By default we vary the spectral index over the range [0, 7].
+    (*new* changes in the common red noise process params [no gamma or delta])
     :param upper_limit:
         Perform upper limit on common red noise amplitude. By default
         this is set to False. Note that when perfoming upper limits it
         is recommended that the spectral index also be fixed to a specific
         value.
-
+    :param logmin:
+        psd=='spectrum', so this specifies the lower prior on log10_rho_gw
+    :param logmax:
+        psd=='spectrum', so this specifies the upper prior on log10_rho_gw
+        
     :param bayesephem:
         Include BayesEphem model. Set to False by default
     :param be_type:
@@ -3696,24 +3695,38 @@ def stochastic_uldm_fm(
         else:
             s = gp_signals.TimingModel(use_svd=tm_svd)
 
+    ###
+    ### CHANGE START
+    
+    if dists is None:
+        ### TO DO 
+        # write code which makes a dictionary from pulsar information
+
+    ### CHANGE END
+    ### 
+        
     # red noise
     s += red_noise_block(
         psd="powerlaw", prior=amp_prior, Tspan=Tspan, components=n_rnfreqs
     )
 
-    # TO IMPLEMENT: common red noise block
+    ###
+    ### CHANGE START (adjusted crn params)
+    ### TO DO: common red noise ULDM ORF 
+    ### (inside this function from blocks.py)
     s += common_red_noise_block(
-        psd=psd,
+        psd="spectrum",
         prior=amp_prior,
         Tspan=Tspan,
         components=n_uldmfreqs,
-        gamma_val=gamma_common,
-        delta_val=delta_common,
-        orf="hd",
-        name="gw",
+        orf="uldm_fm",
+        name="uldm",
         pshift=pshift,
         pseed=pseed,
+        dists=dists
     )
+    ###
+    ### CHANGE END (adjusted crn params)
 
     # ephemeris model
     if bayesephem:

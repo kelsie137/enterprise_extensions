@@ -496,3 +496,11 @@ def generalized_gwpol_psd(
     )
 
     return S_psd * np.repeat(df, 2)
+
+##############################################
+###  new function for distances  ###
+##############################################
+
+@signal_base.function
+def uldm_fm_orf():
+    #TO DO: Develop orf function using Josh's understanding
