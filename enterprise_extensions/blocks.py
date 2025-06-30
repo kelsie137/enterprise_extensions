@@ -16,6 +16,7 @@ from . import dropout as drop
 from . import gp_kernels as gpk
 from . import model_orfs
 from . import model_utils
+from . import dist_utils #new import
 
 
 __all__ = [
@@ -1165,7 +1166,9 @@ def chromatic_noise_block(
 
     return cgp
 
-
+##############################################
+###  changed function for distances  ###
+##############################################
 def common_red_noise_block(
     psd="powerlaw",
     prior="log-uniform",
@@ -1207,6 +1210,7 @@ def common_red_noise_block(
     tndm=False,
     flagname="group",
     flagval=None,
+    dists=None,
 ):
     """
     Returns common red noise signal object.
@@ -1227,7 +1231,7 @@ def common_red_noise_block(
         models. By default spectral index is varied of range [0,7]
     :param delta_val:
         Value of spectral index for high frequencies in broken power-law
-        and turnover models. By default spectral index is varied in range [0,7].\
+        and turnover models. By default spectral index is varied in range [0,7].
     :param logmin:
         Specify the lower bound of the prior on the amplitude for all psd but 'spectrum'.
         If psd=='spectrum', then this specifies the lower prior on log10_rho_gw
@@ -1250,7 +1254,8 @@ def common_red_noise_block(
     :param pseed:
         Option to provide a seed for the random phase shift.
     :param name: Name of common red process
-
+    :param dists: *new*
+        Dictionary containing relevant pulsar distance information. (new parameter)
     """
     if orf_bins is None:
         orf_bin_size = 7
@@ -1573,6 +1578,26 @@ def common_red_noise_block(
             combine=combine,
             name=name,
         )
+    ### Location of new orf
+    elif "uldm_fm" in orf:
+        
+        #define array of distance objects
+        dist_arr = []
+        for i, e in distances.items():
+            if "PX" in e[2]:
+                par_arr.append(dist_utils.PXDistParameter(e[0], e[1]))
+            else:
+                par_arr.append(dist_utils.DMDistParameter(e[0], e[1]))
+        #TO DO: Work with Josh to develop the ORF function here, its priors, etc
+        orf_fn = model_orfs.uldm_fm_orf(dist_arr, other_params)
+        crn = gp_signals.ULDMCommonGP(
+            cpl, 
+            cbasis, 
+            orf_fn,
+            combine=combine, 
+            name=name
+        )
+        
     elif isinstance(orf, types.FunctionType):
         crn = gp_signals.BasisCommonGP(
             cpl, cbasis, orf, coefficients=coefficients, combine=combine, name=name
