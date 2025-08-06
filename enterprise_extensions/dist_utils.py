@@ -6,26 +6,50 @@ from scipy.stats import norm
 
 from enterprise.signals import parameter
 
-
-def DMDistPrior(value, dist, err):
-    """Prior function for DMDist parameters.
-
-    :param value:   point where we want the prior evaluated
-    :param dist:    mean distance
-    :param err:     distance error
-
-    :return:        prior value
+def DMDistLnPrior(value, dist, err):
     """
+    Log-prior for DMDist parameters.
+    Flat between (dist - err, dist + err), with Gaussian tails on both sides.
 
-    boxheight = 1/((dist+err)-(dist-err))
-    gaussheight = 1/(np.sqrt(2*np.pi*(0.25*err)**2))
+    Parameters
+    ----------
+    value : float or np.ndarray
+        Evaluation point(s).
+    dist : float
+        Central distance.
+    err : float
+        Symmetric uncertainty (half-width of flat region).
 
-    y = np.where(value<=(dist-err), norm.pdf(value,dist-err, 0.25*err)*boxheight/gaussheight,
-                 np.where((value>(dist-err)) & (value<(dist+err)), boxheight,
-                          norm.pdf(value,dist+err, 0.25*err)*boxheight/gaussheight))
+    Returns
+    -------
+    ln_prior : float or np.ndarray
+        Log prior evaluated at the input value(s).
+    """
+    # Define edges and parameters
+    box_low = dist - err
+    box_high = dist + err
+    sigma = 0.25 * err
 
-    area = 1+1*boxheight/gaussheight
-    return y/area
+    # Heights
+    box_height = 1 / (box_high - box_low)
+    gauss_height = 1 / (np.sqrt(2 * np.pi) * sigma)
+    log_scaling = np.log(box_height / gauss_height)
+
+    # Evaluate log prior
+    ln_prior = np.where(
+        value <= box_low,
+        norm.logpdf(value, loc=box_low, scale=sigma) + log_scaling,
+        np.where(
+            value < box_high,
+            np.log(box_height),
+            norm.logpdf(value, loc=box_high, scale=sigma) + log_scaling
+        )
+    )
+
+    # Normalization: log(area)
+    norm_area = 1 + box_height / gauss_height
+    return ln_prior - np.log(norm_area)
+
 
 def DMDistSampler(dist, err, size=None):
     """Sampling function for DMDist parameters.
@@ -58,7 +82,7 @@ def DMDistSampler(dist, err, size=None):
 def DMDistParameter(dist=0, err=1, size=None):
     """Class factory for DM distance parameters with a pdf that is
     flat for dist+-err and a half Gaussian beyond that
-    
+
     :param dist:    mean distance
     :param err:     distance error
     :param size:    length for vector parameter
@@ -68,26 +92,48 @@ def DMDistParameter(dist=0, err=1, size=None):
 
     class DMDist(parameter.Parameter):
         _size = size
-        _prior = parameter.Function(DMDistPrior, dist=dist, err=err)
+        _logprior = parameter.Function(DMDistLnPrior, dist=dist, err=err)
         _sampler = staticmethod(DMDistSampler)
         _typename = parameter._argrepr("DMDist", dist=dist, err=err)
 
     return DMDist
 
-def PXDistPrior(value, dist, err):
-    """Prior function for PXDist parameters.
 
-    :param value:   point where we want the prior evaluated
-    :param dist:    mean distance
-    :param err:     distance error
 
-    :return:        prior value
+def PXDistLnPrior(value, dist, err):
     """
-    
-    pi = 1/dist
-    pi_err = err/dist**2
+    Log-prior for PXDist parameters.
+    Prior over distance based on Gaussian distribution for parallax (1/value).
 
-    return 1/(np.sqrt(2*np.pi)*pi_err*value**2)*np.exp(-(pi-value**(-1))**2/(2*pi_err**2))
+    Parameters
+    ----------
+    value : float or np.ndarray
+        Evaluation point(s), representing distance.
+    dist : float
+        Mean distance.
+    err : float
+        Distance uncertainty.
+
+    Returns
+    -------
+    ln_prior : float or np.ndarray
+        Log prior evaluated at the input value(s).
+    """
+    # Gaussian in parallax space
+    pi = 1.0 / dist
+    pi_err = err / dist**2
+
+    # Convert to log-prior using transformation rule for PDF under inverse
+    # p(x) = N(1/x; pi, pi_err) * (1/x^2)
+    # ln p(x) = ln N(1/x) - 2 ln x
+
+    inv_value = 1.0 / value
+    ln_pdf = -0.5 * ((inv_value - pi) / pi_err)**2 - np.log(np.sqrt(2 * np.pi) * pi_err)
+    ln_jacobian = -2 * np.log(value)
+
+    return ln_pdf + ln_jacobian
+
+
 
 def PXDistSampler(dist, err, size=None):
     """Sampling function for PXDist parameters.
@@ -117,7 +163,7 @@ def PXDistParameter(dist=0, err=1, size=None):
 
     class PXDist(parameter.Parameter):
         _size = size
-        _prior = parameter.Function(PXDistPrior, dist=dist, err=err)
+        _logprior = parameter.Function(PXDistLnPrior, dist=dist, err=err)
         _sampler = staticmethod(PXDistSampler)
         _typename = parameter._argrepr("PXDist", dist=dist, err=err)
 
